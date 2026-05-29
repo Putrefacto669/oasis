@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Prueba React Supabase</title>
+</head>
+<body>
+    <h1>Prueba de conexión</h1>
+    <div id="rooms"></div>
+    <div id="reservations"></div>
+    
+    <script>
+        const SUPABASE_URL = 'https://unkbcfqmgvfmxyvlcqpc.supabase.co';
+        const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVua2JjZnFtZ3ZmbXh5dmxjcXBjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk5MjY1ODQsImV4cCI6MjA5NTUwMjU4NH0.EeQ2srU-Ovni96AXSd_ZWblZMNgN1qwJYbUjCiBoiJE';
+
+        async function cargarDatos() {
+            const roomsRes = await fetch(`${SUPABASE_URL}/rest/v1/rooms?select=*`, {
+                headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
+            });
+            const rooms = await roomsRes.json();
+            document.getElementById('rooms').innerHTML = `<h2>Habitaciones (${rooms.length})</h2><pre>${JSON.stringify(rooms, null, 2)}</pre>`;
+            
+            const reservationsRes = await fetch(`${SUPABASE_URL}/rest/v1/reservations?select=*`, {
+                headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
+            });
+            const reservations = await reservationsRes.json();
+            document.getElementById('reservations').innerHTML = `<h2>Reservas (${reservations.length})</h2><pre>${JSON.stringify(reservations, null, 2)}</pre>`;
+        }
+        
+        cargarDatos();
+    </script>
+</body>
+</html>
