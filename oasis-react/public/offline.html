@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sin conexión - Oasis Traveler</title>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background: linear-gradient(135deg, #1e4a3b, #0f3b2f);
+            color: white;
+            text-align: center;
+        }
+        .offline-container {
+            padding: 40px;
+        }
+        .icon {
+            font-size: 5rem;
+            margin-bottom: 20px;
+        }
+        button {
+            background: #c47a5c;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 30px;
+            cursor: pointer;
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="offline-container">
+        <div class="icon">📡</div>
+        <h1>Sin conexión a internet</h1>
+        <p>Por favor, verifica tu conexión.</p>
+        <p>Los datos que modificaste se sincronizarán automáticamente cuando vuelva internet.</p>
+        <button onclick="location.reload()">Reintentar</button>
+    </div>
+</body>
+</html>
