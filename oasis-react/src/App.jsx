@@ -5,6 +5,7 @@ import { jsPDF } from 'jspdf'
 import * as XLSX from 'xlsx'
 import { supabase } from './lib/supabaseClient'
 import './index.css'
+import GanttCalendar from './components/GanttCalendar'
 
 Chart.register(...registerables)
 
@@ -21,7 +22,6 @@ function App() {
   const [cargando, setCargando] = useState(true)
   const [isOnline, setIsOnline] = useState(navigator.onLine)
 
-  // Estados para filtros y paginación
   const [filtroHabitacion, setFiltroHabitacion] = useState('')
   const [filtroReserva, setFiltroReserva] = useState('')
   const [paginaActualHab, setPaginaActualHab] = useState(1)
@@ -29,7 +29,6 @@ function App() {
   const [notificacion, setNotificacion] = useState({ show: false, message: '', type: '' })
   const itemsPorPagina = 5
 
-  // Refs para gráficos
   const chartOcupacionRef = useRef(null)
   const chartIngresosRef = useRef(null)
   const chartCanalesRef = useRef(null)
@@ -37,16 +36,19 @@ function App() {
   let chartIngresos = null
   let chartCanales = null
 
-  // Modal states
   const [modalHabitacion, setModalHabitacion] = useState({ abierto: false, editando: null })
   const [modalReserva, setModalReserva] = useState({ abierto: false, editando: null })
+  const [modalConsumo, setModalConsumo] = useState({ abierto: false, habitacionId: null, habitacionNombre: '' })
   const [formHabitacion, setFormHabitacion] = useState({ nombre: '', tipo: 'Privada', precio: '', estado: 'Disponible' })
   const [formReserva, setFormReserva] = useState({
     huesped: '', email: '', telefono: '', habitacionId: '', 
     checkin: '', checkout: '', canal: 'direct', estado: 'Confirmada'
   })
 
-  // Funciones de offline
+  // ============================================
+  // FUNCIONES DE OFFLINE
+  // ============================================
+
   const guardarOffline = (tabla, datos) => {
     const offlineData = JSON.parse(localStorage.getItem('offline_changes') || '[]')
     offlineData.push({ tabla, datos, timestamp: new Date().toISOString() })
@@ -73,7 +75,10 @@ function App() {
     mostrarNotificacion('✅ Datos sincronizados con el servidor', 'success')
   }
 
-  // Funciones de Supabase
+  // ============================================
+  // FUNCIONES DE SUPABASE
+  // ============================================
+
   const cargarHabitacionesDesdeSupabase = async () => {
     try {
       if (!isOnline) {
@@ -132,6 +137,10 @@ function App() {
       if (cachedReservas) setReservas(JSON.parse(cachedReservas))
     }
   }
+
+  // ============================================
+  // CRUD HABITACIONES
+  // ============================================
 
   const agregarHabitacion = async (habitacion) => {
     const nuevaHabitacion = {
@@ -195,6 +204,10 @@ function App() {
       }
     }
   }
+
+  // ============================================
+  // CRUD RESERVAS
+  // ============================================
 
   const agregarReserva = async (reserva) => {
     if (new Date(reserva.checkout) <= new Date(reserva.checkin)) {
@@ -302,7 +315,41 @@ function App() {
     }
   }
 
-  // Efectos
+  // ============================================
+  // POS - REGISTRAR CONSUMO (C#)
+  // ============================================
+
+  const registrarConsumo = async (habitacionId, concepto, monto, cantidad) => {
+    try {
+      const response = await fetch('https://localhost:7273/api/POS/consumo', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          habitacionId: parseInt(habitacionId), 
+          concepto, 
+          monto: parseFloat(monto), 
+          cantidad: parseInt(cantidad) 
+        })
+      })
+      const data = await response.json()
+      if (response.ok) {
+        mostrarNotificacion(data.mensaje || '✅ Consumo registrado', 'success')
+        return true
+      } else {
+        mostrarNotificacion(data.error || '❌ Error al registrar consumo', 'error')
+        return false
+      }
+    } catch (error) {
+      mostrarNotificacion('❌ Error de conexión con el POS', 'error')
+      console.error('Error POS:', error)
+      return false
+    }
+  }
+
+  // ============================================
+  // EFECTOS INICIALES
+  // ============================================
+
   useEffect(() => {
     const actualizarFecha = () => {
       const ahora = new Date()
@@ -358,82 +405,126 @@ function App() {
       window.removeEventListener('offline', handleOffline)
     }
   }, [])
+  // Limpiar gráficos al desmontar el componente
+useEffect(() => {
+  return () => {
+    if (chartOcupacion) {
+      chartOcupacion.destroy();
+      chartOcupacion = null;
+    }
+    if (chartIngresos) {
+      chartIngresos.destroy();
+      chartIngresos = null;
+    }
+    if (chartCanales) {
+      chartCanales.destroy();
+      chartCanales = null;
+    }
+  };
+}, []);
 
   const mostrarNotificacion = (message, type = 'success') => {
     setNotificacion({ show: true, message, type })
     setTimeout(() => setNotificacion({ show: false, message: '', type: '' }), 3000)
   }
 
-  // Gráficos
-  const generarGraficos = () => {
-    const ultimos7Dias = []
-    const ocupacionData = []
-    for (let i = 6; i >= 0; i--) {
-      const fecha = new Date()
-      fecha.setDate(fecha.getDate() - i)
-      const fechaStr = fecha.toISOString().slice(0, 10)
-      ultimos7Dias.push(fechaStr.slice(5))
-      const ocupadasDia = reservas.filter(r => r.check_in <= fechaStr && r.check_out > fechaStr).length
-      ocupacionData.push(ocupadasDia)
-    }
-    if (chartOcupacionRef.current) {
-      if (chartOcupacion) chartOcupacion.destroy()
-      chartOcupacion = new Chart(chartOcupacionRef.current, {
-        type: 'line',
-        data: {
-          labels: ultimos7Dias,
-          datasets: [{
-            label: 'Habitaciones ocupadas',
-            data: ocupacionData,
-            borderColor: '#1e4a3b',
-            backgroundColor: 'rgba(30, 74, 59, 0.1)',
-            fill: true,
-            tension: 0.3
-          }]
-        },
-        options: { responsive: true, maintainAspectRatio: true }
-      })
-    }
-    const meses = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun']
-    const ingresosData = [1250, 1450, 1890, 2100, 1780, reservas.reduce((sum, r) => sum + r.total_amount, 0)]
-    if (chartIngresosRef.current) {
-      if (chartIngresos) chartIngresos.destroy()
-      chartIngresos = new Chart(chartIngresosRef.current, {
-        type: 'bar',
-        data: {
-          labels: meses,
-          datasets: [{
-            label: 'Ingresos ($)',
-            data: ingresosData,
-            backgroundColor: '#c47a5c',
-            borderRadius: 8
-          }]
-        },
-        options: { responsive: true, maintainAspectRatio: true }
-      })
-    }
-    const canales = { direct: 0, booking: 0, expedia: 0, whatsapp: 0 }
-    reservas.forEach(r => {
-      if (canales[r.channel] !== undefined) canales[r.channel]++
-      else canales.direct++
-    })
-    if (chartCanalesRef.current) {
-      if (chartCanales) chartCanales.destroy()
-      chartCanales = new Chart(chartCanalesRef.current, {
-        type: 'doughnut',
-        data: {
-          labels: ['Directo', 'Booking.com', 'Expedia', 'WhatsApp'],
-          datasets: [{
-            data: [canales.direct, canales.booking, canales.expedia, canales.whatsapp || 0],
-            backgroundColor: ['#1e4a3b', '#c47a5c', '#f59e0b', '#3b82f6']
-          }]
-        },
-        options: { responsive: true, maintainAspectRatio: true }
-      })
-    }
+  // ============================================
+  // GRÁFICOS
+  // ============================================
+
+   // ============================================
+// GRÁFICOS - VERSIÓN CORREGIDA
+// ============================================
+
+const generarGraficos = () => {
+  // Destruir gráficos existentes ANTES de crear nuevos
+  if (chartOcupacion) {
+    chartOcupacion.destroy();
+    chartOcupacion = null;
+  }
+  if (chartIngresos) {
+    chartIngresos.destroy();
+    chartIngresos = null;
+  }
+  if (chartCanales) {
+    chartCanales.destroy();
+    chartCanales = null;
   }
 
-  // Exportar Excel
+  // Verificar que los canvas existan
+  if (!chartOcupacionRef.current) return;
+  if (!chartIngresosRef.current) return;
+  if (!chartCanalesRef.current) return;
+
+  // 1. Gráfico de ocupación por día
+  const ultimos7Dias = [];
+  const ocupacionData = [];
+  for (let i = 6; i >= 0; i--) {
+    const fecha = new Date();
+    fecha.setDate(fecha.getDate() - i);
+    const fechaStr = fecha.toISOString().slice(0, 10);
+    ultimos7Dias.push(fechaStr.slice(5));
+    const ocupadasDia = reservas.filter(r => r.check_in <= fechaStr && r.check_out > fechaStr).length;
+    ocupacionData.push(ocupadasDia);
+  }
+
+  chartOcupacion = new Chart(chartOcupacionRef.current, {
+    type: 'line',
+    data: {
+      labels: ultimos7Dias,
+      datasets: [{
+        label: 'Habitaciones ocupadas',
+        data: ocupacionData,
+        borderColor: '#1e4a3b',
+        backgroundColor: 'rgba(30, 74, 59, 0.1)',
+        fill: true,
+        tension: 0.3
+      }]
+    },
+    options: { responsive: true, maintainAspectRatio: true }
+  });
+
+  // 2. Gráfico de ingresos por mes
+  const meses = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun'];
+  const ingresosData = [1250, 1450, 1890, 2100, 1780, reservas.reduce((sum, r) => sum + r.total_amount, 0)];
+
+  chartIngresos = new Chart(chartIngresosRef.current, {
+    type: 'bar',
+    data: {
+      labels: meses,
+      datasets: [{
+        label: 'Ingresos ($)',
+        data: ingresosData,
+        backgroundColor: '#c47a5c',
+        borderRadius: 8
+      }]
+    },
+    options: { responsive: true, maintainAspectRatio: true }
+  });
+
+  // 3. Gráfico de reservas por canal
+  const canales = { direct: 0, booking: 0, expedia: 0, whatsapp: 0 };
+  reservas.forEach(r => {
+    if (canales[r.channel] !== undefined) canales[r.channel]++;
+    else canales.direct++;
+  });
+
+  chartCanales = new Chart(chartCanalesRef.current, {
+    type: 'doughnut',
+    data: {
+      labels: ['Directo', 'Booking.com', 'Expedia', 'WhatsApp'],
+      datasets: [{
+        data: [canales.direct, canales.booking, canales.expedia, canales.whatsapp || 0],
+        backgroundColor: ['#1e4a3b', '#c47a5c', '#f59e0b', '#3b82f6']
+      }]
+    },
+    options: { responsive: true, maintainAspectRatio: true }
+  });
+};
+  // ============================================
+  // EXPORTAR EXCEL
+  // ============================================
+
   const exportarHabitacionesExcel = () => {
     const datos = habitaciones.map(h => ({ 'ID': h.id, 'Nombre': h.name, 'Tipo': h.type, 'Precio': h.price, 'Estado': h.status }))
     const ws = XLSX.utils.json_to_sheet(datos)
@@ -452,7 +543,10 @@ function App() {
     mostrarNotificacion('📊 Reservas exportadas a Excel', 'success')
   }
 
-  // Filtros
+  // ============================================
+  // FILTROS Y PAGINACIÓN
+  // ============================================
+
   const habitacionesFiltradas = habitaciones.filter(h =>
     h.name.toLowerCase().includes(filtroHabitacion.toLowerCase()) ||
     h.type.toLowerCase().includes(filtroHabitacion.toLowerCase()) ||
@@ -469,66 +563,37 @@ function App() {
   const totalPaginasHab = Math.ceil(habitacionesFiltradas.length / itemsPorPagina)
   const totalPaginasRes = Math.ceil(reservasFiltradas.length / itemsPorPagina)
 
-  // Gantt
+  // ============================================
+  // GANTT CONTENT
+  // ============================================
+
   const GanttContent = () => {
-    const diasSemana = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom']
-    const hoy = new Date()
-    const fechas = []
-    for (let i = 0; i < 7; i++) {
-      const fecha = new Date(hoy)
-      fecha.setDate(hoy.getDate() + i)
-      fechas.push(fecha)
-    }
     return (
-      <div>
-        <div className="page-header">
-          <h1 className="page-title"><i className="fas fa-calendar-alt"></i> Calendario de Ocupación</h1>
-        </div>
-        <div style={{ overflowX: 'auto' }}>
-          <table className="data-table" style={{ minWidth: '800px' }}>
-            <thead>
-              <tr>
-                <th style={{ width: '200px' }}>Habitación</th>
-                {fechas.map((f, i) => (
-                  <th key={i} style={{ textAlign: 'center', minWidth: '100px' }}>
-                    {diasSemana[f.getDay() === 0 ? 6 : f.getDay() - 1]}<br />
-                    {f.getDate()}/{f.getMonth() + 1}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {habitaciones.map(habitacion => {
-                const reservasHabitacion = reservas.filter(r => r.room_name === habitacion.name)
-                return (
-                  <tr key={habitacion.id}>
-                    <td><strong>{habitacion.name}</strong></td>
-                    {fechas.map((fecha, idx) => {
-                      const fechaStr = fecha.toISOString().slice(0, 10)
-                      const reserva = reservasHabitacion.find(r => r.check_in <= fechaStr && r.check_out > fechaStr)
-                      return (
-                        <td key={idx} style={{
-                          textAlign: 'center',
-                          backgroundColor: reserva ? '#1e4a3b' : '#e2e8f0',
-                          color: reserva ? 'white' : '#475569',
-                          borderRadius: '8px'
-                        }}>
-                          {reserva ? '📅 Ocupado' : '🟢 Libre'}
-                        </td>
-                      )
-                    })}
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </div>
-      </div>
+      <GanttCalendar 
+        habitaciones={habitaciones} 
+        reservas={reservas} 
+        onReservaUpdate={() => {
+          cargarReservasDesdeSupabase()
+          cargarHabitacionesDesdeSupabase()
+        }} 
+      />
     )
   }
+  useEffect(() => {
+  return () => {
+    // Limpiar gráficos al desmontar
+    if (chartOcupacion) chartOcupacion.destroy()
+    if (chartIngresos) chartIngresos.destroy()
+    if (chartCanales) chartCanales.destroy()
+  }
+}, [])
 
-  // PDF
+  // ============================================
+  // PDF Y IMPRESIÓN
+  // ============================================
+
   const imprimirReporte = () => window.print()
+  
   const descargarPDF = async () => {
     const elemento = document.getElementById('reporteCompleto')
     if (!elemento) {
@@ -549,7 +614,10 @@ function App() {
     }
   }
 
-  // Login/Logout
+  // ============================================
+  // LOGIN / LOGOUT
+  // ============================================
+
   const handleLogin = (e) => {
     e.preventDefault()
     if (email === 'admin@oasistraveler.com' && password === 'admin123') {
@@ -561,13 +629,17 @@ function App() {
       setErrorLogin('❌ Email o contraseña incorrectos')
     }
   }
+  
   const handleLogout = () => {
     localStorage.removeItem('usuario')
     setLogueado(false)
     mostrarNotificacion('👋 Sesión cerrada', 'info')
   }
 
-  // Modales
+  // ============================================
+  // MODALES
+  // ============================================
+
   const abrirModalHabitacion = (habitacion = null) => {
     if (habitacion) {
       setFormHabitacion({ id: habitacion.id, nombre: habitacion.name, tipo: habitacion.type, precio: habitacion.price, estado: habitacion.status })
@@ -577,6 +649,7 @@ function App() {
       setModalHabitacion({ abierto: true, editando: null })
     }
   }
+
   const abrirModalReserva = (reserva = null) => {
     const hoy = new Date().toISOString().slice(0, 10)
     const manana = new Date()
@@ -604,20 +677,51 @@ function App() {
       setModalReserva({ abierto: true, editando: null })
     }
   }
+
+  const abrirModalConsumo = (habitacionId, habitacionNombre) => {
+    setModalConsumo({ abierto: true, habitacionId, habitacionNombre })
+  }
+
   const guardarHabitacion = (e) => {
     e.preventDefault()
-    if (modalHabitacion.editando) editarHabitacion(modalHabitacion.editando.id, formHabitacion)
-    else agregarHabitacion(formHabitacion)
+    if (modalHabitacion.editando) {
+      editarHabitacion(modalHabitacion.editando.id, formHabitacion)
+    } else {
+      agregarHabitacion(formHabitacion)
+    }
     setModalHabitacion({ abierto: false, editando: null })
   }
+
   const guardarReserva = (e) => {
     e.preventDefault()
-    if (modalReserva.editando) editarReserva(modalReserva.editando.id, formReserva)
-    else agregarReserva(formReserva)
+    if (modalReserva.editando) {
+      editarReserva(modalReserva.editando.id, formReserva)
+    } else {
+      agregarReserva(formReserva)
+    }
     setModalReserva({ abierto: false, editando: null })
   }
 
-  // Dashboard
+  const guardarConsumo = async (e) => {
+    e.preventDefault()
+    const concepto = document.getElementById('concepto').value
+    const monto = document.getElementById('monto').value
+    const cantidad = document.getElementById('cantidad').value
+    
+    const exito = await registrarConsumo(modalConsumo.habitacionId, concepto, monto, cantidad)
+    
+    if (exito) {
+      setModalConsumo({ abierto: false, habitacionId: null, habitacionNombre: '' })
+      document.getElementById('concepto').value = ''
+      document.getElementById('monto').value = ''
+      document.getElementById('cantidad').value = '1'
+    }
+  }
+
+  // ============================================
+  // COMPONENTE DASHBOARD
+  // ============================================
+
   const DashboardContent = () => {
     const totalHabs = habitaciones.length
     const ocupadas = habitaciones.filter(h => h.status === 'Ocupado').length
@@ -639,17 +743,38 @@ function App() {
         </div>
         <h3>📋 Últimas reservas</h3>
         <table className="data-table">
-          <thead><tr><th>Huésped</th><th>Habitación</th><th>Fechas</th><th>Total</th></tr></thead>
+          <thead>
+            <tr>
+              <th>Huésped</th>
+              <th>Habitación</th>
+              <th>Fechas</th>
+              <th>Total</th>
+            </tr>
+          </thead>
           <tbody>
-            {reservas.slice(0, 5).map(r => <tr key={r.id}><td>{r.guest_name}</td><td>{r.room_name}</td><td>{r.check_in} → {r.check_out}</td><td>${r.total_amount}</td></tr>)}
-            {reservas.length === 0 && <tr><td colSpan="4">No hay reservas registradas</td></tr>}
+            {reservas.slice(0, 5).map(r => (
+              <tr key={r.id}>
+                <td data-label="Huésped">{r.guest_name}</td>
+                <td data-label="Habitación">{r.room_name}</td>
+                <td data-label="Fechas">{r.check_in} → {r.check_out}</td>
+                <td data-label="Total">${r.total_amount}</td>
+              </tr>
+            ))}
+            {reservas.length === 0 && (
+              <tr>
+                <td colSpan="4">No hay reservas registradas</td>
+              </tr>
+            )}
           </tbody>
         </table>
       </>
     )
   }
 
-  // Reportes
+  // ============================================
+  // COMPONENTE REPORTES
+  // ============================================
+
   const ReportesContent = () => {
     const totalHabs = habitaciones.length
     const ocupadas = habitaciones.filter(h => h.status === 'Ocupado').length
@@ -680,15 +805,32 @@ function App() {
         <div style={{ marginTop: '32px' }}>
           <h3>📋 Detalle de Reservas</h3>
           <table className="data-table">
-            <thead><tr><th>Huésped</th><th>Habitación</th><th>Check-in</th><th>Check-out</th><th>Total</th><th>Canal</th></tr></thead>
+            <thead>
+              <tr>
+                <th>Huésped</th>
+                <th>Habitación</th>
+                <th>Check-in</th>
+                <th>Check-out</th>
+                <th>Total</th>
+                <th>Canal</th>
+              </tr>
+            </thead>
             <tbody>
-              {reservas.map(r => <tr key={r.id}><td>{r.guest_name}</td>
-              <td>{r.room_name}</td>
-              <td>{r.check_in}</td>
-              <td>{r.check_out}</td>
-              <td>${r.total_amount}</td>
-              <td>{r.channel}</td></tr>)}
-              {reservas.length === 0 && <tr><td colSpan="6">No hay reservas</td></tr>}
+              {reservas.map(r => (
+                <tr key={r.id}>
+                  <td data-label="Huésped">{r.guest_name}</td>
+                  <td data-label="Habitación">{r.room_name}</td>
+                  <td data-label="Check-in">{r.check_in}</td>
+                  <td data-label="Check-out">{r.check_out}</td>
+                  <td data-label="Total">${r.total_amount}</td>
+                  <td data-label="Canal">{r.channel}</td>
+                </tr>
+              ))}
+              {reservas.length === 0 && (
+                <tr>
+                  <td colSpan="6">No hay reservas registradas</td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>
@@ -696,7 +838,10 @@ function App() {
     )
   }
 
-  // Login
+  // ============================================
+  // PANTALLA DE LOGIN
+  // ============================================
+
   if (!logueado) {
     return (
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', background: 'linear-gradient(135deg, #1e4a3b, #0f3b2f)' }}>
@@ -724,9 +869,14 @@ function App() {
     )
   }
 
+  // ============================================
+  // DASHBOARD PRINCIPAL
+  // ============================================
+
   return (
     <div className="app">
       {notificacion.show && <div className={`toast ${notificacion.type === 'error' ? 'toast-error' : ''}`}>{notificacion.message}</div>}
+      
       <aside className="sidebar">
         <div className="logo-area"><h2>Oasis<span>Traveler</span></h2><p>Gestión Hotelera</p></div>
         <nav className="nav-menu">
@@ -740,6 +890,7 @@ function App() {
         </nav>
         <div className="user-footer"><div className="avatar">AD</div><div className="user-info"><div className="name">Administrador</div><div className="role">Admin</div></div></div>
       </aside>
+
       <main className="main-content">
         <div className="topbar">
           <div className="date-badge"><i className="far fa-calendar-alt"></i> {fecha}</div>
@@ -750,59 +901,145 @@ function App() {
             <button className="btn-logout" onClick={handleLogout}><i className="fas fa-sign-out-alt"></i> Salir</button>
           </div>
         </div>
+
         <div className="page-container">
           {pagina === 'dashboard' && <DashboardContent />}
+          
           {pagina === 'habitaciones' && (
             <>
               <div className="page-header">
                 <h1 className="page-title"><i className="fas fa-door-open"></i> Habitaciones</h1>
-                <div style={{ display: 'flex', gap: '12px' }}><button className="btn-secondary" onClick={exportarHabitacionesExcel}><i className="fas fa-file-excel"></i> Exportar</button><button className="btn-primary" onClick={() => abrirModalHabitacion()}><i className="fas fa-plus"></i> Nueva</button></div>
+                <div style={{ display: 'flex', gap: '12px' }}>
+                  <button className="btn-secondary" onClick={exportarHabitacionesExcel}><i className="fas fa-file-excel"></i> Exportar</button>
+                  <button className="btn-primary" onClick={() => abrirModalHabitacion()}><i className="fas fa-plus"></i> Nueva</button>
+                </div>
               </div>
               <input type="text" className="search-input" placeholder="🔍 Buscar por nombre, tipo o estado..." value={filtroHabitacion} onChange={(e) => { setFiltroHabitacion(e.target.value); setPaginaActualHab(1) }} />
-              <table className="data-table">
-                <thead><tr><th>Nombre</th><th>Tipo</th><th>Precio</th><th>Estado</th><th>Acciones</th></tr></thead>
-                <tbody>{habitacionesPaginadas.map(h => <tr key={h.id}><td>{h.name}</td>
-                <td>{h.type}</td>
-                <td>${h.price}</td>
-                <td><span className={`status-badge ${h.status === 'Disponible' ? 'available' : 'occupied'}`}>{h.status}</span></td>
-                <td><button className="btn-icon btn-edit" title="Editar" onClick={() => abrirModalHabitacion(h)}><i className="fas fa-pen"></i></button><button className="btn-icon btn-delete" title="Eliminar" onClick={() => eliminarHabitacion(h.id)}><i className="fas fa-trash"></i></button></td></tr>)}</tbody>
-              </table>
-              {totalPaginasHab > 1 && <div className="pagination"><button onClick={() => setPaginaActualHab(p => Math.max(1, p - 1))} disabled={paginaActualHab === 1}>Anterior</button><span>Página {paginaActualHab} de {totalPaginasHab}</span><button onClick={() => setPaginaActualHab(p => Math.min(totalPaginasHab, p + 1))} disabled={paginaActualHab === totalPaginasHab}>Siguiente</button></div>}
+              <div className="table-responsive">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Nombre</th>
+                      <th>Tipo</th>
+                      <th>Precio</th>
+                      <th>Estado</th>
+                      <th>Consumos</th>
+                      <th>Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {habitacionesPaginadas.map(h => (
+                      <tr key={h.id}>
+                        <td data-label="Nombre">{h.name}</td>
+                        <td data-label="Tipo">{h.type}</td>
+                        <td data-label="Precio">${h.price}</td>
+                        <td data-label="Estado"><span className={`status-badge ${h.status === 'Disponible' ? 'available' : 'occupied'}`}>{h.status}</span></td>
+                        <td data-label="Consumos">
+                          <button 
+                            className="btn-icon" 
+                            style={{ background: '#c47a5c', color: 'white', borderRadius: '8px', padding: '5px 10px' }}
+                            onClick={() => abrirModalConsumo(h.id, h.name)}
+                            title="Registrar consumo"
+                          >
+                            <i className="fas fa-receipt"></i> Consumo
+                          </button>
+                        </td>
+                        <td data-label="Acciones" className="actions-cell">
+                          <button className="btn-icon btn-edit" title="Editar" onClick={() => abrirModalHabitacion(h)}><i className="fas fa-pen"></i></button>
+                          <button className="btn-icon btn-delete" title="Eliminar" onClick={() => eliminarHabitacion(h.id)}><i className="fas fa-trash"></i></button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {totalPaginasHab > 1 && (
+                <div className="pagination">
+                  <button onClick={() => setPaginaActualHab(p => Math.max(1, p - 1))} disabled={paginaActualHab === 1}>Anterior</button>
+                  <span>Página {paginaActualHab} de {totalPaginasHab}</span>
+                  <button onClick={() => setPaginaActualHab(p => Math.min(totalPaginasHab, p + 1))} disabled={paginaActualHab === totalPaginasHab}>Siguiente</button>
+                </div>
+              )}
             </>
           )}
+          
           {pagina === 'reservas' && (
             <>
               <div className="page-header">
                 <h1 className="page-title"><i className="fas fa-calendar-check"></i> Reservas</h1>
-                <div style={{ display: 'flex', gap: '12px' }}><button className="btn-secondary" onClick={exportarReservasExcel}><i className="fas fa-file-excel"></i> Exportar</button><button className="btn-primary" onClick={() => abrirModalReserva()}><i className="fas fa-plus"></i> Nueva</button></div>
+                <div style={{ display: 'flex', gap: '12px' }}>
+                  <button className="btn-secondary" onClick={exportarReservasExcel}><i className="fas fa-file-excel"></i> Exportar</button>
+                  <button className="btn-primary" onClick={() => abrirModalReserva()}><i className="fas fa-plus"></i> Nueva</button>
+                </div>
               </div>
               <input type="text" className="search-input" placeholder="🔍 Buscar por huésped, email, habitación o estado..." value={filtroReserva} onChange={(e) => { setFiltroReserva(e.target.value); setPaginaActualRes(1) }} />
-              <table className="data-table">
-                <thead><tr><th>Huésped</th><th>Email</th><th>Habitación</th><th>Check-in</th><th>Check-out</th><th>Total</th><th>Estado</th><th>Acciones</th></tr></thead>
-                <tbody>{reservasPaginadas.map(r => <tr key={r.id}><td>{r.guest_name}</td>
-                <td>{r.guest_email}</td>
-                <td>{r.room_name}</td>
-                <td>{r.check_in}</td>
-                <td>{r.check_out}</td>
-                <td>${r.total_amount}</td>
-                <td><span className="status-badge confirmed">{r.status}</span></td>
-                <td><button className="btn-icon btn-edit" title="Editar" onClick={() => abrirModalReserva(r)}><i className="fas fa-pen"></i></button><button className="btn-icon btn-delete" title="Eliminar" onClick={() => eliminarReserva(r.id)}><i className="fas fa-trash"></i></button></td></tr>)}</tbody>
-              </table>
-              {totalPaginasRes > 1 && <div className="pagination"><button onClick={() => setPaginaActualRes(p => Math.max(1, p - 1))} disabled={paginaActualRes === 1}>Anterior</button><span>Página {paginaActualRes} de {totalPaginasRes}</span><button onClick={() => setPaginaActualRes(p => Math.min(totalPaginasRes, p + 1))} disabled={paginaActualRes === totalPaginasRes}>Siguiente</button></div>}
+              <div className="table-responsive">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Huésped</th>
+                      <th>Email</th>
+                      <th>Habitación</th>
+                      <th>Check-in</th>
+                      <th>Check-out</th>
+                      <th>Total</th>
+                      <th>Estado</th>
+                      <th>Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {reservasPaginadas.map(r => (
+                      <tr key={r.id}>
+                        <td data-label="Huésped">{r.guest_name}</td>
+                        <td data-label="Email">{r.guest_email}</td>
+                        <td data-label="Habitación">{r.room_name}</td>
+                        <td data-label="Check-in">{r.check_in}</td>
+                        <td data-label="Check-out">{r.check_out}</td>
+                        <td data-label="Total">${r.total_amount}</td>
+                        <td data-label="Estado"><span className="status-badge confirmed">{r.status}</span></td>
+                        <td data-label="Acciones" className="actions-cell">
+                          <button className="btn-icon btn-edit" title="Editar" onClick={() => abrirModalReserva(r)}><i className="fas fa-pen"></i></button>
+                          <button className="btn-icon btn-delete" title="Eliminar" onClick={() => eliminarReserva(r.id)}><i className="fas fa-trash"></i></button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {totalPaginasRes > 1 && (
+                <div className="pagination">
+                  <button onClick={() => setPaginaActualRes(p => Math.max(1, p - 1))} disabled={paginaActualRes === 1}>Anterior</button>
+                  <span>Página {paginaActualRes} de {totalPaginasRes}</span>
+                  <button onClick={() => setPaginaActualRes(p => Math.min(totalPaginasRes, p + 1))} disabled={paginaActualRes === totalPaginasRes}>Siguiente</button>
+                </div>
+              )}
             </>
           )}
+          
           {pagina === 'reportes' && <ReportesContent />}
           {pagina === 'gantt' && <GanttContent />}
+          
           {pagina === 'canales' && (
             <>
               <div className="page-header"><h1 className="page-title"><i className="fas fa-globe"></i> Canales</h1></div>
-              <table className="data-table"><thead><tr><th>Canal</th><th>Estado</th><th>Reservas/mes</th><th>Comisión</th></tr></thead><tbody>
-                <tr><td>🏨 Booking.com</td><td><span className="status-badge confirmed">Conectado</span></td><td>12</td><td>15%</td></tr>
-                <tr><td>✈️ Expedia</td><td><span className="status-badge confirmed">Conectado</span></td><td>5</td><td>18%</td></tr>
-                <tr><td>💚 Directo</td><td><span className="status-badge confirmed">Activo</span></td><td>8</td><td>0%</td></tr>
-              </tbody></table>
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Canal</th>
+                    <th>Estado</th>
+                    <th>Reservas/mes</th>
+                    <th>Comisión</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr><td>🏨 Booking.com</td><td><span className="status-badge confirmed">Conectado</span></td><td>12</td><td>15%</td></tr>
+                  <tr><td>✈️ Expedia</td><td><span className="status-badge confirmed">Conectado</span></td><td>5</td><td>18%</td></tr>
+                  <tr><td>💚 Directo</td><td><span className="status-badge confirmed">Activo</span></td><td>8</td><td>0%</td></tr>
+                </tbody>
+              </table>
             </>
           )}
+          
           {pagina === 'configuracion' && (
             <>
               <div className="page-header"><h1 className="page-title"><i className="fas fa-sliders-h"></i> Configuración</h1></div>
@@ -816,6 +1053,8 @@ function App() {
           )}
         </div>
       </main>
+
+      {/* MODAL HABITACIÓN */}
       {modalHabitacion.abierto && (
         <div className="modal-overlay" onClick={() => setModalHabitacion({ abierto: false, editando: null })}>
           <div className="modal-content" onClick={e => e.stopPropagation()}>
@@ -830,6 +1069,8 @@ function App() {
           </div>
         </div>
       )}
+
+      {/* MODAL RESERVA */}
       {modalReserva.abierto && (
         <div className="modal-overlay" onClick={() => setModalReserva({ abierto: false, editando: null })}>
           <div className="modal-content" onClick={e => e.stopPropagation()}>
@@ -844,6 +1085,40 @@ function App() {
               <div className="form-group"><label>Canal</label><select value={formReserva.canal} onChange={e => setFormReserva({ ...formReserva, canal: e.target.value })}><option value="direct">Directo</option><option value="booking">Booking</option><option value="expedia">Expedia</option></select></div>
               <div className="form-group"><label>Estado</label><select value={formReserva.estado} onChange={e => setFormReserva({ ...formReserva, estado: e.target.value })}><option>Confirmada</option><option>Pendiente</option></select></div>
               <div className="modal-buttons"><button type="button" className="btn-secondary" onClick={() => setModalReserva({ abierto: false, editando: null })}>Cancelar</button><button type="submit" className="btn-primary">Guardar</button></div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL CONSUMO (POS) */}
+      {modalConsumo.abierto && (
+        <div className="modal-overlay" onClick={() => setModalConsumo({ abierto: false, habitacionId: null, habitacionNombre: '' })}>
+          <div className="modal-content" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2><i className="fas fa-receipt"></i> Registrar Consumo</h2>
+              <button onClick={() => setModalConsumo({ abierto: false, habitacionId: null, habitacionNombre: '' })} style={{ background: 'none', border: 'none', fontSize: '1.8rem', cursor: 'pointer' }}>&times;</button>
+            </div>
+            <form onSubmit={guardarConsumo}>
+              <div className="form-group">
+                <label>Habitación</label>
+                <input type="text" value={modalConsumo.habitacionNombre} disabled style={{ background: 'var(--bg-main)' }} />
+              </div>
+              <div className="form-group">
+                <label>Concepto</label>
+                <input type="text" id="concepto" required placeholder="Ej: 2 Cervezas, Pizza, Desayuno..." />
+              </div>
+              <div className="form-group">
+                <label>Monto unitario ($)</label>
+                <input type="number" id="monto" required placeholder="5.00" step="0.01" />
+              </div>
+              <div className="form-group">
+                <label>Cantidad</label>
+                <input type="number" id="cantidad" required placeholder="1" defaultValue="1" min="1" />
+              </div>
+              <div className="modal-buttons" style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
+                <button type="button" className="btn-secondary" onClick={() => setModalConsumo({ abierto: false, habitacionId: null, habitacionNombre: '' })}>Cancelar</button>
+                <button type="submit" className="btn-primary">Registrar Consumo</button>
+              </div>
             </form>
           </div>
         </div>
